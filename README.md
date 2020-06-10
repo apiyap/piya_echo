@@ -7,3 +7,7 @@ sudo python3 setup.py install
 cd examples
 python3 echo.py
 </pre>
+## Or
+<pre>
+pip3 install -i https://test.pypi.org/simple/ Piya.Sonar
+</pre>
