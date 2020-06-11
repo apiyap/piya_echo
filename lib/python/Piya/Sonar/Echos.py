@@ -29,20 +29,23 @@ import threading
 import numpy as np
 
 
-class Echo(object):
+class Echos(object):
     # Use over 50ms measurement cycle. 
-    def __init__(self, trigger_pin, echo_pin, mPerSecond = 343, mIOMode=GPIO.BOARD, invert_echo_pin = False,callback=None):
-        self._trigger_pin = trigger_pin # Trigger Pin
-        self._echo_pin = echo_pin # Echo Pin
+    def __init__(self, pairs_list_pin=[], mPerSecond = 343, mIOMode=GPIO.BOARD, invert_echo_pin = False, max_distance = 5,callback=None):
+
+        self._pairs_list_pin = []
+        self._pairs_list_pin.append(pairs_list_pin)
         self._gpio_mode = mIOMode
         self._mPerSecond = mPerSecond
         self._invert_echo_pin = invert_echo_pin
+        self._max_distance = max_distance
         self._call_back_fn = callback
         # How frequently are we going to send out a ping (in milliseconds). 50ms would be 20 times a second.
         self._sensor_rest = 0.05 # Sensor rest time between reads
+        self._max_timeout = self._max_distance / self._mPerSecond
         self._defaultUnit = 'cm'
         self._thread_running = False
-        self._echo_times = np.array([0.0, 0.0])
+        self._echo_times = [] # np.array([0.0, 0.0])
         self._distance = 0.0
         self._thr = threading.Thread(target=self._echo_back)
         # Configure GPIO Pins
@@ -50,14 +53,16 @@ class Echo(object):
             # Use BOARD  pin numbering for the GPIO pins.
             
             GPIO.setmode(self._gpio_mode)
-            GPIO.setup(self._trigger_pin, GPIO.OUT)
-            GPIO.setup(self._echo_pin, GPIO.IN)      
-            # Trigger 10us pulse for initial sensor cycling.
-            GPIO.output(self._trigger_pin, False)
-            sleep(0.5)
-            GPIO.output(self._trigger_pin, True)
-            sleep(0.00001)
-            GPIO.output(self._trigger_pin, False)
+            for trigger_pin, echo_pin in self._pairs_list_pin:
+                GPIO.setup(trigger_pin, GPIO.OUT)
+                GPIO.setup(echo_pin, GPIO.IN)
+                # Trigger 10us pulse for initial sensor cycling.
+                GPIO.output(trigger_pin, False)
+                sleep(0.5)
+                GPIO.output(trigger_pin, True)
+                sleep(0.00001)
+                GPIO.output(trigger_pin, False)
+
             self._thread_running = True
             self._thr.start()
         except Exception as e:
@@ -66,13 +71,6 @@ class Echo(object):
     def __del__(self):
         self._thread_running = False
         # Reset GPIO settings
-        
-
-    def _echo_ready(self):
-	    if self._invert_echo_pin :
-		    return GPIO.input(self._echo_pin)
-
-	    return not GPIO.input(self._echo_pin)
 
     def _echo_back(self):
         old_value=True
@@ -92,6 +90,7 @@ class Echo(object):
                         self._call_back_fn(self._distance)
                 
             sleep(0.00001)
+
 	
     """
     Convert echo time to distance unit of measure.
@@ -114,85 +113,4 @@ class Echo(object):
             distance = 0
             
         return distance
-
-    def _trigger(self):
-        # Trigger 10us pulse for initial sensor cycling.
-        self._echo_times[0] = 0.0
-        self._echo_times[1] = 0.0
-        self._distance = 0.0
-        GPIO.output(self._trigger_pin, True)
-        sleep(0.00001)
-        GPIO.output(self._trigger_pin, False)
-
-    """
-    For one shot distance measuring, first set the prefered units of
-    measure (default = cm). Distance measurement will return zero
-    if the sensor is not ready or timeout occurred.
-    """
-    def send(self):
-        if self._echo_ready():
-            self._trigger()
-            #sleep(self._sensor_rest)
-            return True
-
-        return False
-    
-    def wait(self):
-        sleep(self._sensor_rest)
-
-    def stop(self):
-        self._thread_running = False
-        
-
-    def read_loop(self):
-        try:
-            while True:
-                if self._echo_ready():
-                    self._trigger()
-                sleep(self._sensor_rest)
-        finally:
-            self.stop()
-    
-    """
-    You can set the default units of measure for the send() and
-    samples() methods. On class initialisation, cm is the default
-    setting.
-    """
-    @property
-    def default_unit(self):
-        return self._defaultUnit
-
-    
-    @default_unit.setter
-    def default_unit(self, unit):
-        unitPass = False
-        if unit == 'mm':
-            unitPass = True
-        elif unit == 'cm':
-            unitPass = True
-        elif unit == 'm':
-            unitPass = True
-        elif unit == 'inch':
-            unitPass = True
-
-        if unitPass == True:
-            self._defaultUnit = unit
-        else:
-            raise RuntimeError("Incorrect Unit for Default Unit")
-
-    """
-    The sensor hardware needs a rest period between each trigger
-    operations. If the rest period is too short, subsequent readings
-    may become unstable.
-    """
-    @property
-    def rest(self):
-        return self._sensor_rest
-
-    
-    @rest.setter
-    def rest(self, sDelay):
-        self._sensor_rest = sDelay
-
-
 
