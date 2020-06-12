@@ -27,71 +27,44 @@ from time import sleep
 import Jetson.GPIO as GPIO
 import threading
 import numpy as np
-
+from Piya.Sonar.IOEvent import  IOEvent
 
 class Echos(object):
     # Use over 50ms measurement cycle. 
-    def __init__(self, pairs_list_pin=[], mPerSecond = 343, mIOMode=GPIO.BOARD, invert_echo_pin = False, max_distance = 5,callback=None):
+    def __init__(self, pairs_list_pin={}, mPerSecond = 343, max_distance=5, mIOMode=GPIO.BOARD, invert_echo_pin = False, callback=None):
 
-        self._pairs_list_pin = []
-        self._pairs_list_pin.append(pairs_list_pin)
         self._gpio_mode = mIOMode
         self._mPerSecond = mPerSecond
         self._invert_echo_pin = invert_echo_pin
-        self._max_distance = max_distance
         self._call_back_fn = callback
         # How frequently are we going to send out a ping (in milliseconds). 50ms would be 20 times a second.
-        self._sensor_rest = 0.05 # Sensor rest time between reads
-        self._max_timeout = self._max_distance / self._mPerSecond
         self._defaultUnit = 'cm'
-        self._thread_running = False
-        self._echo_times = [] # np.array([0.0, 0.0])
-        self._distance = 0.0
-        self._thr = threading.Thread(target=self._echo_back)
-        # Configure GPIO Pins
-        try:
-            # Use BOARD  pin numbering for the GPIO pins.
-            
-            GPIO.setmode(self._gpio_mode)
-            for trigger_pin, echo_pin in self._pairs_list_pin:
-                GPIO.setup(trigger_pin, GPIO.OUT)
-                GPIO.setup(echo_pin, GPIO.IN)
-                # Trigger 10us pulse for initial sensor cycling.
-                GPIO.output(trigger_pin, False)
-                sleep(0.5)
-                GPIO.output(trigger_pin, True)
-                sleep(0.00001)
-                GPIO.output(trigger_pin, False)
+        self._max_timeout = (max_distance / mPerSecond) #sec
+        self._trigger_offset = 0.005         # > 2.3 ms
+        self._pairs_list_pin = pairs_list_pin
+        self._io_events = {}
+        self._results = {}
 
-            self._thread_running = True
-            self._thr.start()
-        except Exception as e:
-            print(e)
-        
+        for echo,(trigger_pin, echo_pin)  in self._pairs_list_pin.items(): 
+            print("Init %s trigger pin[%d], echo pin[%d]"%(echo, trigger_pin, echo_pin))
+            self._io_events[echo] = IOEvent(trigger_pin, echo_pin, self._invert_echo_pin, self._max_timeout, self._echo_back, [echo])
+            self._results[echo] = 0.0
+
+        for echo,elem in self._io_events.items():
+            print("start:",echo)
+            elem.start()
+
+
     def __del__(self):
-        self._thread_running = False
+        self.stop()
         # Reset GPIO settings
 
-    def _echo_back(self):
-        old_value=True
-        check_value = False
-        if self._invert_echo_pin :
-            check_value = True
+        
+    def _echo_back(self, value, args):
+        self._results[args[0]] = self._valueToUnit(value[0], self._defaultUnit)
+        
+       
 
-        while  self._thread_running :
-            value = GPIO.input(self._echo_pin)
-            if value != old_value :
-                old_value = value
-                self._echo_times[value] =  monotonic()
-                #print("Echo [", value, "]:", self._echo_times[value])
-                if value == check_value:
-                    self._distance = self._valueToUnit(np.diff(self._echo_times), self._defaultUnit)
-                    if self._call_back_fn!= None:
-                        self._call_back_fn(self._distance)
-                
-            sleep(0.00001)
-
-	
     """
     Convert echo time to distance unit of measure.
     """
@@ -113,4 +86,66 @@ class Echos(object):
             distance = 0
             
         return distance
+
+    def _echo_ready(self, echo):
+
+        if echo in self._pairs_list_pin:
+            if self._invert_echo_pin :
+                return GPIO.input(self._pairs_list_pin[echo][1])
+
+            return not GPIO.input(self._pairs_list_pin[echo][1])
+        
+        return False
+
+    def send(self):
+        for elem in self._io_events.values():
+            #print("trig:", echo)
+            elem.trig()
+            elem.join()
+    
+    def wait(self):
+        sleep(self._trigger_offset)
+
+    def stop(self):
+        for elem in self._io_events.values():
+            elem.stop()
+        
+    def results(self):
+        if self._call_back_fn != None:
+            self._call_back_fn(self._results)
+        
+    def read_loop(self):
+        try:
+            while True:
+                for elem in self._io_events.values():
+                    #print("trig:", echo)
+                    elem.trig()
+                    elem.join()
+
+                self.results()
+                sleep(self._trigger_offset)
+        finally:
+            self.stop()
+    
+    @property
+    def default_unit(self):
+        return self._defaultUnit
+
+    
+    @default_unit.setter
+    def default_unit(self, unit):
+        unitPass = False
+        if unit == 'mm':
+            unitPass = True
+        elif unit == 'cm':
+            unitPass = True
+        elif unit == 'm':
+            unitPass = True
+        elif unit == 'inch':
+            unitPass = True
+
+        if unitPass == True:
+            self._defaultUnit = unit
+        else:
+            raise RuntimeError("Incorrect Unit for Default Unit")
 
