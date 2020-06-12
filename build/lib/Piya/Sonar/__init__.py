@@ -1,2 +1,2 @@
 from Piya.Sonar import *
-VERSION = '0.1.0'
+VERSION = '0.1.1'

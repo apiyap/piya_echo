@@ -29,12 +29,10 @@ import threading
 import numpy as np
 from Piya.Sonar.IOEvent import  IOEvent
 
-
-class Echo(object):
+class Echos(object):
     # Use over 50ms measurement cycle. 
-    def __init__(self, trigger_pin, echo_pin, mPerSecond = 343, max_distance=5, mIOMode=GPIO.BOARD, invert_echo_pin = False,callback=None,name="Echo"):
-        self._trigger_pin = trigger_pin # Trigger Pin
-        self._echo_pin = echo_pin # Echo Pin
+    def __init__(self, pairs_list_pin={}, mPerSecond = 343, max_distance=5, mIOMode=GPIO.BOARD, invert_echo_pin = False, callback=None):
+
         self._gpio_mode = mIOMode
         self._mPerSecond = mPerSecond
         self._invert_echo_pin = invert_echo_pin
@@ -43,23 +41,29 @@ class Echo(object):
         self._defaultUnit = 'cm'
         self._max_timeout = (max_distance / mPerSecond) #sec
         self._trigger_offset = 0.005         # > 2.3 ms
-        self._io_event = IOEvent(self._trigger_pin, self._echo_pin, self._invert_echo_pin, self._max_timeout,self._echo_back , name)
-        self._io_event.start()
+        self._pairs_list_pin = pairs_list_pin
+        self._io_events = {}
+        self._results = {}
+
+        for echo,(trigger_pin, echo_pin)  in self._pairs_list_pin.items(): 
+            print("Init %s trigger pin[%d], echo pin[%d]"%(echo, trigger_pin, echo_pin))
+            self._io_events[echo] = IOEvent(trigger_pin, echo_pin, self._invert_echo_pin, self._max_timeout, self._echo_back, [echo])
+            self._results[echo] = 0.0
+
+        for echo,elem in self._io_events.items():
+            print("start:",echo)
+            elem.start()
+
+
     def __del__(self):
         self.stop()
         # Reset GPIO settings
+
         
-
-    def _echo_ready(self):
-	    if self._invert_echo_pin :
-		    return GPIO.input(self._echo_pin)
-
-	    return not GPIO.input(self._echo_pin)
-
     def _echo_back(self, value, args):
-        distance = self._valueToUnit(value, self._defaultUnit)
-        if self._call_back_fn != None:
-            self._call_back_fn(distance)
+        self._results[args[0]] = self._valueToUnit(value[0], self._defaultUnit)
+        
+       
 
     """
     Convert echo time to distance unit of measure.
@@ -83,26 +87,42 @@ class Echo(object):
             
         return distance
 
+    def _echo_ready(self, echo):
+
+        if echo in self._pairs_list_pin:
+            if self._invert_echo_pin :
+                return GPIO.input(self._pairs_list_pin[echo][1])
+
+            return not GPIO.input(self._pairs_list_pin[echo][1])
+        
+        return False
 
     def send(self):
-        if self._echo_ready():
-            self._io_event.trig()
-            self._io_event.join()
-            return True
-        return False
+        for elem in self._io_events.values():
+            #print("trig:", echo)
+            elem.trig()
+            elem.join()
     
     def wait(self):
         sleep(self._trigger_offset)
 
     def stop(self):
-        self._io_event.stop()
+        for elem in self._io_events.values():
+            elem.stop()
         
-
+    def results(self):
+        if self._call_back_fn != None:
+            self._call_back_fn(self._results)
+        
     def read_loop(self):
         try:
             while True:
-                self._io_event.trig()
-                self._io_event.join()
+                for elem in self._io_events.values():
+                    #print("trig:", echo)
+                    elem.trig()
+                    elem.join()
+
+                self.results()
                 sleep(self._trigger_offset)
         finally:
             self.stop()
